@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mailman-tasks"
+version = "0.1.0"
+description = "Official Python client for Mailman's hosted Tasks API"
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["mailman", "tasks", "email", "verification", "automation", "asyncio"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Typing :: Typed",
+  "Operating System :: OS Independent",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://getmailman.app/developers"
+Repository = "https://github.com/chefsonya/mailman-tasks-python"
+Issues = "https://github.com/chefsonya/mailman-tasks-python/issues"
+Documentation = "https://getmailman.app/tasks-api.md"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mailman_tasks"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/mailman_tasks",
+  "/tests",
+  "/.github/workflows/ci.yml",
+  "/.gitignore",
+  "/README.md",
+  "/CHANGELOG.md",
+  "/SECURITY.md",
+  "/LICENSE",
+  "/pyproject.toml",
+]

@@ -1,0 +1,21 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    # Python 3.8 has prebuilt setup-python distributions for Ubuntu 22.04.
+    runs-on: ${{ matrix.python == '3.8' && 'ubuntu-22.04' || 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.8', '3.10', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install . mypy
+      - run: python -m unittest discover -s tests -v
+      - run: python -m mypy mailman_tasks
