@@ -9,8 +9,7 @@ Version **0.1.0**, MIT license, zero runtime dependencies.
 pip install mailman-tasks
 ```
 
-Import as `mailman_tasks`. Get your API key in **Mailman ? Settings ? API & agents
-? Tasks API**. Mailman must be open and connected for the key to work. Read the key
+Import as `mailman_tasks`. Get your API key in **Mailman → Settings → Tasks API**. Mailman must be open and connected for the key to work. Read the key
 from your configuration or an environment variable; never embed it in source.
 
 See the [developer page](https://getmailman.app/developers) and
