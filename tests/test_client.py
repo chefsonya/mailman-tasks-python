@@ -328,8 +328,10 @@ class Tests(unittest.TestCase):
         self.assertEqual(self.count('poll'), 1)
 
     def test_deadline_and_outcomes(self):
-        with self.assertRaises(TaskTimeoutError):
+        self.assertEqual(MailmanTasks('secret-key').request_timeout, 15)
+        with self.assertRaises(TaskTimeoutError) as lost:
             self.client.wait('lost', deadline=time.time()+.03)
+        self.assertEqual(lost.exception.reason, 'deadline')
         self.state['status'] = 'error'
         self.state['details'] = {'errorStatus': 'invalid mail task', 'errorMessage': 'bad regex'}
         with self.assertRaises(TaskFailedError) as caught:
@@ -337,8 +339,9 @@ class Tests(unittest.TestCase):
         self.assertEqual(caught.exception.errorStatus, 'invalid mail task')
         self.assertEqual(caught.exception.error_message, 'bad regex')
         self.state['status'] = 'timeout'
-        with self.assertRaises(TaskTimeoutError):
+        with self.assertRaises(TaskTimeoutError) as timed_out:
             self.client.run(task(), timeout=1)
+        self.assertEqual(timed_out.exception.reason, 'timeout')
 
     def test_buffer_bound_ttl_and_group_override(self):
         self.client._buffer_limit = 2
@@ -652,7 +655,7 @@ class Tests(unittest.TestCase):
         with self.assertRaises(TaskTimeoutError):
             self.client.wait('lost', timeout=.02)
         self.assertEqual(len(requests), 1)
-        self.assertTrue(29 < requests[0] <= 30, requests)
+        self.assertTrue(14 < requests[0] <= 15, requests)
         time.sleep(.03)
         self.assertEqual(len(requests), 1)
 

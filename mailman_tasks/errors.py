@@ -57,4 +57,11 @@ class TaskFailedError(MailmanError):
 
 
 class TaskTimeoutError(MailmanError):
-    pass
+    """No result in time. ``reason`` is ``"timeout"`` when the server completed the
+    task as timeout (no matching email arrived in time), or ``"deadline"`` when the
+    wait ended without a result: the task is lost, so trigger a fresh email and
+    create it again."""
+
+    def __init__(self, message: str, *, reason: str = "deadline") -> None:
+        super().__init__(message)
+        self.reason = reason

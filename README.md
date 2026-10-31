@@ -71,7 +71,7 @@ ambiguous: the server may have accepted it. Do not automatically recreate it.
 ## API and concurrency
 
 Both clients accept `MailmanTasks(api_key, *, group="default",
-base_url="https://tasks.getmailman.app", request_timeout=30, user_agent=None,
+base_url="https://tasks.getmailman.app", request_timeout=15, user_agent=None,
 opener=None, metadata_limit=50000)`, with async methods on `AsyncMailmanTasks`.
 
 - `verify()` returns `True`, or raises, including `AuthError` on 401.
@@ -167,7 +167,7 @@ errors), `message`, and `retry_after` in seconds (or `None` when absent).
 | `NetworkError` | Transport failure, including a client-side request timeout; a create may or may not exist |
 | `TooManyTasksError` | Client tracking capacity reached; no request was sent |
 | `TaskFailedError` | Task status `error`; has `error_status`, `error_message`, camelCase aliases `errorStatus`, `errorMessage`, and `result` |
-| `TaskTimeoutError` | Server status `timeout`, or local deadline: "Task lost: create it again" |
+| `TaskTimeoutError` | `reason` is `"timeout"` for server status `timeout`, or `"deadline"` when the wait ran out: "Task lost: create it again" |
 
 Create retries **only explicit 429 or 503 responses**, for at most three HTTP
 attempts, sleeping for the **longest** of Retry-After and jittered exponential

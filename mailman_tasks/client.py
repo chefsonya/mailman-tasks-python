@@ -163,7 +163,7 @@ class MailmanTasks:
 
     def __init__(self, api_key: str, *, group: str = "default",
                  base_url: str = "https://tasks.getmailman.app",
-                 request_timeout: float = 30, user_agent: Optional[str] = None,
+                 request_timeout: float = 15, user_agent: Optional[str] = None,
                  opener: Any = None, metadata_limit: int = 50000) -> None:
         parts = urllib.parse.urlsplit(base_url)
         if parts.scheme not in ("http", "https") or not parts.netloc or parts.username or parts.password or parts.query or parts.fragment:
@@ -640,7 +640,7 @@ class MailmanTasks:
 
 def _outcome(result: Task, redact: Callable[[str], str]) -> Task:
     if result["status"] == "timeout":
-        raise TaskTimeoutError("Task timed out: create it again")
+        raise TaskTimeoutError("Task timed out: no matching email arrived in time", reason="timeout")
     if result["status"] == "error":
         safe_result = dict(result)
         safe_result["results"] = {k: redact(str(v)) for k, v in result.get("results", {}).items()}
@@ -651,7 +651,7 @@ def _outcome(result: Task, redact: Callable[[str], str]) -> Task:
 class AsyncMailmanTasks:
     """Async facade; HTTP uses an executor, waits do not occupy executor threads."""
     def __init__(self, api_key: str, *, group: str = "default",
-                 base_url: str = "https://tasks.getmailman.app", request_timeout: float = 30,
+                 base_url: str = "https://tasks.getmailman.app", request_timeout: float = 15,
                  user_agent: Optional[str] = None, opener: Any = None,
                  metadata_limit: int = 50000) -> None:
         self._client = MailmanTasks(api_key, group=group, base_url=base_url,

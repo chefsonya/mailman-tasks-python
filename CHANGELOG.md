@@ -8,6 +8,8 @@
 - Pace polls from request completion, rechecking the monotonic gate after every wake, so transport delays cannot shorten the minimum gap.
 - Cover HTML, empty, invalid UTF-8 and other non-JSON HTTP error bodies with regression tests; preserve typed errors and status.
 - The packaged README includes the correct Mailman → Settings → Tasks API key path.
+- `TaskTimeoutError.reason` is `"timeout"` when the server timed the task out and `"deadline"` when the wait ran out, matching the Node and Go SDKs.
+- The default `request_timeout` is 15 seconds, matching the guide and the Node and Go SDKs.
 
 ## 0.1.0
 
