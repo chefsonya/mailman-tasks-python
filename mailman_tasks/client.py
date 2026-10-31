@@ -28,6 +28,13 @@ Task = Dict[str, Any]
 _NETWORK_ERRORS = (OSError, http.client.HTTPException)
 
 
+def _copy_result(result: Task) -> Task:
+    copied = dict(result)
+    if "results" in result:
+        copied["results"] = dict(result["results"])
+    return copied
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req: Any, fp: Any, code: int, msg: str,
                          headers: Any, newurl: str) -> None:
@@ -177,7 +184,7 @@ class MailmanTasks:
         self.group = group
         self.base_url = base_url.rstrip("/")
         self.request_timeout = request_timeout
-        self.user_agent = user_agent or "mailman-tasks-python/0.1.0"
+        self.user_agent = user_agent or "mailman-tasks-python/0.2.0"
         self._request_context = threading.local()
         self._opener = opener or urllib.request.build_opener(
             _NoRedirect(), _HTTPHandler(self._request_context), _HTTPSHandler(self._request_context))
@@ -416,8 +423,7 @@ class MailmanTasks:
                         self._expire_waiters(selected)
                     if worker and not self._waiters.get(selected):
                         return []
-                    started = time.monotonic()
-                    state.next_poll = started + self._poll_interval
+                    state.next_poll = time.monotonic() + self._poll_interval
                 query = urllib.parse.urlencode({"group": selected})
                 try:
                     results = self._request("GET", "/api/v1/tasks/completed?" + query)["tasks"]
@@ -439,12 +445,16 @@ class MailmanTasks:
                         raise MailmanError("Client is closed; in-flight poll results discarded")
                     state.attempt = 0
                     interval = self._full_page_interval if len(results) == 100 else self._poll_interval
-                    state.next_poll = started + interval
+                    # Pace from completion so transport dispatch delays cannot
+                    # shorten the gap between actual HTTP attempts.
+                    state.next_poll = time.monotonic() + interval
                     self._prune()
                     for result in results:
+                        if result["status"] == "success":
+                            result.setdefault("results", {})
                         task_id = result["id"]
                         key = (selected, task_id)
-                        self._buffer[key] = (time.monotonic(), result)
+                        self._buffer[key] = (time.monotonic(), _copy_result(result))
                         self._buffer.move_to_end(key)
                         self._result_groups[task_id] = selected
                         self._created.pop(task_id, None)
@@ -533,19 +543,11 @@ class MailmanTasks:
         future, group, duration = self._register(task_id, deadline, timeout, end=end)
         try:
             result = future.result(timeout=duration)
-            return self._consume(task_id, group, result)
+            return _copy_result(result)
         except FutureTimeout:
             raise TaskTimeoutError("Task lost: create it again") from None
         finally:
             self._unregister(task_id, group, future)
-
-    def _consume(self, task_id: str, group: str, result: Task) -> Task:
-        with self._condition:
-            cached = self._buffer.get((group, task_id))
-            if cached is not None and cached[1] is result:
-                self._buffer.pop((group, task_id))
-                self._result_groups.pop(task_id, None)
-        return result
 
     def _group_end(self, group: str) -> float:
         return min(self._wait_deadlines[f] for waiting in self._waiters[group].values() for f in waiting)
@@ -688,13 +690,13 @@ class AsyncMailmanTasks:
         future, group, duration = self._client._register(task_id, deadline, timeout, end=end)
         if future.done():
             try:
-                return self._client._consume(task_id, group, future.result())
+                return _copy_result(future.result())
             finally:
                 self._client._unregister(task_id, group, future)
         wrapped = asyncio.wrap_future(future)
         try:
             result = await asyncio.wait_for(asyncio.shield(wrapped), duration)
-            return self._client._consume(task_id, group, result)
+            return _copy_result(result)
         except asyncio.TimeoutError:
             raise TaskTimeoutError("Task lost: create it again") from None
         finally:

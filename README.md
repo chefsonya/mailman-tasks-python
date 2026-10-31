@@ -1,7 +1,7 @@
 # Mailman Tasks for Python
 
 Official Python 3.8+ client for [Mailman's hosted Tasks API](https://getmailman.app/developers).
-Version **0.1.0**, MIT license, zero runtime dependencies.
+Version **0.2.0**, MIT license, zero runtime dependencies.
 
 ## Install
 
@@ -33,7 +33,7 @@ with MailmanTasks(os.environ["MAILMAN_TASKS_KEY"], group="signup-bot") as client
     # Trigger the website's email here.
     result = client.wait(task_id)
     if result["status"] == "success":
-        print(result["results"]["code"])
+        print(result["results"].get("code"))
 ```
 
 `wait()` returns any final status. `run(task)` combines create and wait, returning
@@ -56,7 +56,7 @@ async def main():
             email="alias@example.com", from_="noreply@example.com",
             subject_includes="verification code",
         ))
-        print(result["results"]["code"])
+        print(result["results"].get("code"))
 
 asyncio.run(main())
 ```
@@ -77,6 +77,7 @@ opener=None, metadata_limit=50000)`, with async methods on `AsyncMailmanTasks`.
 - `verify()` returns `True`, or raises, including `AuthError` on 401.
 - `create_task(task)` returns an id. Missing `receivedAt` is now in Unix **seconds**;
   missing `timeout` is **300 seconds**; missing `group` uses the client's group.
+  Values of `receivedAt` at or above 100,000,000,000 are refused as milliseconds.
   The input is not mutated. Explicit timeout 0 or above 3600 normalizes to 3600,
   matching the server. Every HTTP request has a **total** `request_timeout`
   budget covering connection, headers and the complete body, including trickling
@@ -120,16 +121,20 @@ independent clients or processes must use different groups to avoid consuming on
 another's results. Do not change client configuration while it is in use.
 
 All poll attempts, including direct `poll()` calls and retries, share the per-group
-pacing gate: at least **3 seconds**, or **1 second** immediately after a full page
-of 100, and longer when Retry-After/backoff requires it. Backoff and auth delays
+pacing gate: at least **3 seconds** after the previous request completes, or
+**1 second** immediately after a full page of 100, and longer when Retry-After/backoff
+requires it. Backoff and auth delays
 are shared by direct polls and worker restarts. Polling 401s wait about 10 seconds and keep trying until each wait's deadline. Polling 429s honor
 Retry-After; 408, 503 and network failures back off 1, 2, 4 ... up to 30 seconds
 with jitter, subject to the minimum polling interval.
 
-Results enter the bounded dispatcher before waiters are notified. Unclaimed
-results live for **one hour**, up to **50,000 per client** across groups; oldest
-entries are evicted at capacity. A wait consumes its stored result only after
-receiving it successfully, preserving delivery across deadline/cancellation races.
+Results enter the bounded dispatcher before waiters are notified. All
+results, including delivered results, live for **one hour**, up to **50,000 per client**
+across groups; oldest
+entries are evicted at capacity. Repeated waits return a copy of the stored result
+without another poll, preserving delivery across deadline/cancellation races.
+A success always includes a `results` dict; elements that found nothing are absent,
+so use `.get("code")` or `.get("loginUrl")` when reading an element.
 Live task metadata is retained until completion or its original deadline, with
 `metadata_limit=50000` slots by default (configurable on either client). Concurrent
 creates reserve slots before sending. At capacity, `create_task` raises a local
@@ -140,7 +145,7 @@ ids retain their group and deadline in a separate bounded expiry store (at most
 on a retained expired id raises `TaskTimeoutError` immediately, even with an
 explicit longer timeout. After expiry-store eviction/retention ends, an id is
 unknown and uses the fallback described above. Completed
-results retain their group routing in the result buffer until consumed or expired.
+results retain their group routing in the result buffer until evicted or expired.
 Inactive group locks, pacing state and retry counters retire after the pacing gap;
 one client timer handles retirement without racing workers or queued callers.
 Consume results promptly; the buffer is not durable storage.
