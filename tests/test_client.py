@@ -87,7 +87,7 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
             return
         code, data, headers = response
-        encoded = json.dumps(data).encode()
+        encoded = data if isinstance(data, bytes) else json.dumps(data).encode()
         try:
             self.send_response(code)
             for k, v in headers.items():
@@ -133,7 +133,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(sent[2]['timeout'], 300)
         self.assertLess(abs(sent[2]['receivedAt'] - time.time()), 2)
         self.assertEqual(sent[3]['Authorization'], 'Token secret-key')
-        self.assertEqual(sent[3]['User-Agent'], 'mailman-tasks-python/0.1.0')
+        self.assertEqual(sent[3]['User-Agent'], 'mailman-tasks-python/0.2.0')
         self.assertEqual(self.client.poll()[0]['id'], task_id)
         self.assertEqual(self.client.poll(), [])
         self.assertIn('group=bot+%26+%2F+%2B', self.state['calls'][-1][1])
@@ -162,6 +162,109 @@ class Tests(unittest.TestCase):
             t['timeout'] = timeout
             self.client.create_task(t)
             self.assertEqual(self.state['calls'][-1][2]['timeout'], 3600)
+
+    def test_received_at_milliseconds_guard(self):
+        for value in (100_000_000_000, int(time.time() * 1000)):
+            with self.subTest(value=value):
+                t = task()
+                t['receivedAt'] = value
+                with self.assertRaisesRegex(InvalidRequestError, 'seconds, not milliseconds') as caught:
+                    self.client.create_task(t)
+                self.assertEqual(caught.exception.status, 400)
+        self.assertEqual(self.count('create'), 0)
+        t = task()
+        t['receivedAt'] = 99_999_999_999
+        self.client.create_task(t)
+        self.assertEqual(self.state['calls'][-1][2]['receivedAt'], t['receivedAt'])
+
+    def test_non_json_http_errors_keep_type_status_and_retry_after(self):
+        for status, error_type in ((400, InvalidRequestError), (413, PayloadTooLargeError),
+                                   (500, MailmanError), (502, MailmanError), (503, ServerBusyError)):
+            for body in (b'<html>secret-key error</html>', b'', b'\xff', b'[1]', b'null'):
+                with self.subTest(status=status, body=body):
+                    self.state['verify'] = [(status, body, {'Retry-After': '2'})]
+                    with self.assertRaises(error_type) as caught:
+                        self.client.verify()
+                    self.assertIs(type(caught.exception), error_type)
+                    self.assertEqual(caught.exception.status, status)
+                    self.assertEqual(caught.exception.retry_after, 2)
+                    self.assertEqual(str(caught.exception), 'HTTP {}'.format(status))
+
+    def test_non_json_create_retries_only_explicit_busy_response(self):
+        for status, error_type in ((400, InvalidRequestError), (413, PayloadTooLargeError)):
+            before = self.count('create')
+            self.state['create'] = [(status, b'<html>error</html>', {})]
+            with self.assertRaises(error_type):
+                self.client.create_task(task())
+            self.assertEqual(self.count('create'), before + 1)
+        before = self.count('create')
+        self.state['create'] = [(503, b'<html>busy</html>', {})]
+        self.client.create_task(task())
+        self.assertEqual(self.count('create'), before + 2)
+
+    def test_missing_results_and_repeat_wait_preserve_cached_copy(self):
+        for status in ('success', 'error', 'timeout'):
+            with self.subTest(status=status):
+                t = task()
+                t['group'] = status
+                self.state['auto'] = False
+                task_id = self.client.create_task(t)
+                self.state['results'][status] = [{'id': task_id, 'status': status}]
+                polled = self.client.poll(status)[0]
+                first = self.client.wait(task_id, timeout=1)
+                if status == 'success':
+                    self.assertEqual(first['results'], {})
+                    self.assertIsNone(first['results'].get('code'))
+                    polled['results']['code'] = 'changed'
+                    first['results']['code'] = 'changed again'
+                first['status'] = 'changed'
+                before = self.count('poll')
+                second = self.client.wait(task_id, timeout=0)
+                self.assertEqual(second['status'], status)
+                if status == 'success':
+                    self.assertEqual(second['results'], {})
+                self.assertEqual(self.count('poll'), before)
+        self.client._buffer_ttl = 0
+        with self.assertRaises(TaskTimeoutError):
+            self.client.wait(task_id, timeout=0)
+
+    def test_run_without_results(self):
+        self.state['poll'] = [(200, {'tasks': [{'id': '1', 'status': 'success'}]}, {})]
+        self.assertEqual(self.client.run(task(), timeout=1)['results'], {})
+
+    def test_poll_gate_rechecks_early_wakes_and_transport_dispatch_delay(self):
+        clock = [1000.0]
+        sent = []
+        sleeps = []
+        self.client._poll_interval = 3
+        def request(*args, **kwargs):
+            clock[0] += .2  # Dispatch can be delayed after the gate opens.
+            sent.append(clock[0])
+            return {'tasks': []}
+        def early_wake(delay):
+            sleeps.append(delay)
+            clock[0] += min(.5, delay)
+        with patch('mailman_tasks.client.time.monotonic', side_effect=lambda: clock[0]), \
+                patch.object(self.client, '_request', side_effect=request), \
+                patch.object(self.client, '_retire_groups'), \
+                patch.object(self.client._condition, 'wait', side_effect=early_wake):
+            self.client.poll()
+            self.client.poll()
+            self.client.poll()
+        self.assertGreaterEqual(len(sleeps), 12)
+        self.assertTrue(all(b - a >= 3 for a, b in zip(sent, sent[1:])))
+
+    def test_async_missing_results_and_repeat_wait(self):
+        async def check():
+            async with AsyncMailmanTasks('secret-key', base_url=self.client.base_url) as client:
+                self.state['poll'] = [(200, {'tasks': [{'id': '1', 'status': 'success'}]}, {})]
+                first = await client.run(task(), timeout=1)
+                self.assertEqual(first['results'], {})
+                first['results']['code'] = 'changed'
+                before = self.count('poll')
+                self.assertEqual((await client.wait('1', timeout=0))['results'], {})
+                self.assertEqual(self.count('poll'), before)
+        asyncio.run(check(), debug=True)
 
     def test_error_mapping_and_redaction(self):
         for code, message, cls in [(400, 'bad secret-key', InvalidRequestError), (413, 'large', PayloadTooLargeError),
@@ -225,8 +328,10 @@ class Tests(unittest.TestCase):
         self.assertEqual(self.count('poll'), 1)
 
     def test_deadline_and_outcomes(self):
-        with self.assertRaises(TaskTimeoutError):
+        self.assertEqual(MailmanTasks('secret-key').request_timeout, 15)
+        with self.assertRaises(TaskTimeoutError) as lost:
             self.client.wait('lost', deadline=time.time()+.03)
+        self.assertEqual(lost.exception.reason, 'deadline')
         self.state['status'] = 'error'
         self.state['details'] = {'errorStatus': 'invalid mail task', 'errorMessage': 'bad regex'}
         with self.assertRaises(TaskFailedError) as caught:
@@ -234,8 +339,9 @@ class Tests(unittest.TestCase):
         self.assertEqual(caught.exception.errorStatus, 'invalid mail task')
         self.assertEqual(caught.exception.error_message, 'bad regex')
         self.state['status'] = 'timeout'
-        with self.assertRaises(TaskTimeoutError):
+        with self.assertRaises(TaskTimeoutError) as timed_out:
             self.client.run(task(), timeout=1)
+        self.assertEqual(timed_out.exception.reason, 'timeout')
 
     def test_buffer_bound_ttl_and_group_override(self):
         self.client._buffer_limit = 2
@@ -549,7 +655,7 @@ class Tests(unittest.TestCase):
         with self.assertRaises(TaskTimeoutError):
             self.client.wait('lost', timeout=.02)
         self.assertEqual(len(requests), 1)
-        self.assertTrue(29 < requests[0] <= 30, requests)
+        self.assertTrue(14 < requests[0] <= 15, requests)
         time.sleep(.03)
         self.assertEqual(len(requests), 1)
 

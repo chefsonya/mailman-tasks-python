@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0
+
+- Reject millisecond `receivedAt` values (at or above 100,000,000,000) locally with `InvalidRequestError`.
+- Always expose a success `results` dict, including when no elements matched; use safe element access in README examples.
+- Retain delivered results for repeat waits for up to one hour, within the existing buffer cap; return copies to protect retained values.
+- Pace polls from request completion, rechecking the monotonic gate after every wake, so transport delays cannot shorten the minimum gap.
+- Cover HTML, empty, invalid UTF-8 and other non-JSON HTTP error bodies with regression tests; preserve typed errors and status.
+- The packaged README includes the correct Mailman → Settings → Tasks API key path.
+- `TaskTimeoutError.reason` is `"timeout"` when the server timed the task out and `"deadline"` when the wait ran out, matching the Node and Go SDKs.
+- The default `request_timeout` is 15 seconds, matching the guide and the Node and Go SDKs.
+
 ## 0.1.0
 
 - Initial public release of the official Mailman Tasks API client.

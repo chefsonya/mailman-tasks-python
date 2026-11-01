@@ -40,6 +40,8 @@ def prepare(task: Mapping[str, Any], group: str) -> Dict[str, Any]:
             invalid(key + " must be an integer in range")
     if body["receivedAt"] == 0:
         invalid("receivedAt is required")
+    if body["receivedAt"] >= 100_000_000_000:
+        invalid("receivedAt is in seconds, not milliseconds: use int(time.time()) or divide milliseconds by 1000")
     for key in ("mailFilters", "mailElements"):
         items = body.get(key, [])
         if not isinstance(items, list):
